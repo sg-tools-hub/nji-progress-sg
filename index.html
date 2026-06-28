@@ -309,17 +309,13 @@
 
     <script>
       const CONFIG = {
-        // This works when the spreadsheet is public. If Google gives you a different
-        // published CSV URL, replace this value with that exact URL.
-        csvUrl: 'https://docs.google.com/spreadsheets/d/1xgqEmYw6HO1MYUY_g-JHjyWZxWlpEHRHjf_OGpKfruY/gviz/tq?tqx=out:csv&sheet=Sheet1'
+        workerApiUrl: 'https://nji-progress-api.sally20001007.workers.dev/api/progress'
       };
 
       const form = document.getElementById('lookupForm');
       const input = document.getElementById('riderIdInput');
       const button = document.getElementById('lookupButton');
       const result = document.getElementById('result');
-
-      let cachedRows = null;
 
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -330,18 +326,15 @@
         setLoading(true);
 
         try {
-          const rows = await loadRows();
-          const row = findRider(rows, riderId);
+          const params = new URLSearchParams({ riderId });
+          const response = await fetch(`${CONFIG.workerApiUrl}?${params.toString()}`);
+          const data = await response.json();
 
-          if (!row) {
-            renderProgress({
-              found: false,
-              riderId
-            });
-            return;
+          if (!response.ok) {
+            throw new Error(data.error || 'Could not load progress. Please try again later.');
           }
 
-          renderProgress(buildProgress(row, riderId));
+          renderProgress(data);
         } catch (error) {
           result.className = 'state error';
           result.textContent = error.message || 'Could not load progress. Please try again later.';
@@ -349,135 +342,6 @@
           setLoading(false);
         }
       });
-
-      async function loadRows() {
-        if (cachedRows) return cachedRows;
-
-        const response = await fetch(`${CONFIG.csvUrl}&cacheBust=${Date.now()}`);
-        if (!response.ok) {
-          throw new Error('Could not load campaign data. Please try again later.');
-        }
-
-        const csvText = await response.text();
-        cachedRows = parseCsv(csvText);
-        return cachedRows;
-      }
-
-      function findRider(rows, riderId) {
-        const normalizedRiderId = normalizeRiderId(riderId);
-        return rows.find((row) => normalizeRiderId(getValue(row, ['rider_id', 'rider id', 'riderid'])) === normalizedRiderId);
-      }
-
-      function buildProgress(row, riderId) {
-        return {
-          found: true,
-          riderId: getValue(row, ['rider_id', 'rider id', 'riderid']) || riderId,
-          landedDate: getValue(row, ['landed_date', 'hire_date', 'hired_date', 'join_date']),
-          daysSinceHired: getValue(row, ['days_since_hired', 'days since hired']),
-          lastUpdated: new Intl.DateTimeFormat('en-SG', {
-            dateStyle: 'medium',
-            timeStyle: 'short',
-            timeZone: 'Asia/Singapore'
-          }).format(new Date()),
-          windows: [
-            {
-              label: '7 days',
-              completedOrders: getValue(row, ['completed_orders_within_7_days', 'orders_within_7_days', '7_days', '7 days']) || '0',
-              windowCompleted: parseBoolean(getValue(row, ['completed_7_day_window', 'completed_7_days_window']))
-            },
-            {
-              label: '15 days',
-              completedOrders: getValue(row, ['completed_orders_within_15_days', 'orders_within_15_days', '15_days', '15 days']) || '0',
-              windowCompleted: parseBoolean(getValue(row, ['completed_15_day_window', 'completed_15_days_window']))
-            },
-            {
-              label: '30 days',
-              completedOrders: getValue(row, ['completed_orders_within_30_days', 'orders_within_30_days', '30_days', '30 days']) || '0',
-              windowCompleted: parseBoolean(getValue(row, ['completed_30_day_window', 'completed_30_days_window']))
-            }
-          ]
-        };
-      }
-
-      function parseCsv(csvText) {
-        const rows = [];
-        let row = [];
-        let cell = '';
-        let insideQuotes = false;
-
-        for (let index = 0; index < csvText.length; index += 1) {
-          const char = csvText[index];
-          const nextChar = csvText[index + 1];
-
-          if (char === '"' && insideQuotes && nextChar === '"') {
-            cell += '"';
-            index += 1;
-            continue;
-          }
-
-          if (char === '"') {
-            insideQuotes = !insideQuotes;
-            continue;
-          }
-
-          if (char === ',' && !insideQuotes) {
-            row.push(cell);
-            cell = '';
-            continue;
-          }
-
-          if ((char === '\n' || char === '\r') && !insideQuotes) {
-            if (char === '\r' && nextChar === '\n') index += 1;
-            row.push(cell);
-            rows.push(row);
-            row = [];
-            cell = '';
-            continue;
-          }
-
-          cell += char;
-        }
-
-        if (cell || row.length) {
-          row.push(cell);
-          rows.push(row);
-        }
-
-        const headers = (rows.shift() || []).map(normalizeHeader);
-        return rows
-          .filter((item) => item.some((value) => String(value || '').trim()))
-          .map((item) => {
-            const record = {};
-            headers.forEach((header, index) => {
-              record[header] = item[index] || '';
-            });
-            return record;
-          });
-      }
-
-      function getValue(row, candidates) {
-        for (const candidate of candidates) {
-          const value = row[normalizeHeader(candidate)];
-          if (value !== undefined && value !== '') return value;
-        }
-        return '';
-      }
-
-      function normalizeHeader(value) {
-        return String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
-      }
-
-      function normalizeRiderId(value) {
-        return String(value || '').trim().toLowerCase();
-      }
-
-      function parseBoolean(value) {
-        const normalized = String(value || '').trim().toLowerCase();
-        if (!normalized) return null;
-        if (['true', 'yes', 'y', '1', 'completed'].includes(normalized)) return true;
-        if (['false', 'no', 'n', '0', 'in progress'].includes(normalized)) return false;
-        return null;
-      }
 
       function setLoading(isLoading) {
         button.disabled = isLoading;
